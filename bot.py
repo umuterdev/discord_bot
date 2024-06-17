@@ -37,7 +37,6 @@ ffmpeg_options = {
 # Initialize yt_dlp with the specified options
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 
-
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
         super().__init__(source, volume)
@@ -56,11 +55,29 @@ class YTDLSource(discord.PCMVolumeTransformer):
         filename = data['url'] if stream else ytdl.prepare_filename(data)
         return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
 
+class MusicPlayer:
+    def __init__(self):
+        self.queue = asyncio.Queue()
+        self.current = None
+        self.volume = 0.5
+        self.play_next_song = asyncio.Event()
+
+    async def audio_player_task(self, ctx):
+        while True:
+            self.play_next_song.clear()
+            self.current = await self.queue.get()
+            ctx.voice_client.play(self.current, after=lambda e: self.play_next_song.set())
+            await ctx.send(f'Now playing: {self.current.title}')
+            await self.play_next_song.wait()
+
+    def add_to_queue(self, player):
+        self.queue.put_nowait(player)
+
+music_player = MusicPlayer()
 
 @bot.event
 async def on_ready():
     print(f'We have logged in as {bot.user}')
-
 
 @bot.command()
 async def join(ctx):
@@ -72,7 +89,6 @@ async def join(ctx):
     channel = ctx.message.author.voice.channel
     await channel.connect()
 
-
 @bot.command()
 async def leave(ctx):
     """Leaves the voice channel"""
@@ -81,10 +97,9 @@ async def leave(ctx):
     else:
         await ctx.send("I am not in a voice channel.")
 
-
 @bot.command()
-async def play(ctx, url):
-    """Plays a file from a URL"""
+async def play(ctx, *, url):
+    """Plays a file from a URL and queues it if another song is playing"""
     if not ctx.voice_client:
         if ctx.author.voice:
             await ctx.author.voice.channel.connect()
@@ -96,14 +111,14 @@ async def play(ctx, url):
         await ctx.send(f'Attempting to play: {url}')
         try:
             player = await YTDLSource.from_url(url, loop=bot.loop, stream=True)
-            ctx.voice_client.play(player, after=lambda e: print(f'Player error: {e}') if e else None)
-            await ctx.send(f'Now playing: {player.title}')
+            music_player.add_to_queue(player)
+            if not ctx.voice_client.is_playing():
+                bot.loop.create_task(music_player.audio_player_task(ctx))
         except youtube_dl.DownloadError as e:
             await ctx.send(f'Error: {e}')
         except Exception as e:
             await ctx.send(f'An error occurred: {e}')
             print(f'An error occurred: {e}')
-
 
 @bot.command()
 async def stop(ctx):
@@ -113,7 +128,6 @@ async def stop(ctx):
     else:
         await ctx.send("I am not in a voice channel.")
 
-
 @bot.command()
 async def pause(ctx):
     """Pauses the current song"""
@@ -121,7 +135,6 @@ async def pause(ctx):
         ctx.voice_client.pause()
     else:
         await ctx.send("I am not in a voice channel.")
-
 
 @bot.command()
 async def resume(ctx):
@@ -131,7 +144,6 @@ async def resume(ctx):
     else:
         await ctx.send("I am not in a voice channel.")
 
-
 @bot.command()
 async def skip(ctx):
     """Skips the current song"""
@@ -139,7 +151,6 @@ async def skip(ctx):
         ctx.voice_client.stop()
     else:
         await ctx.send("I am not in a voice channel.")
-
 
 # Run the bot
 bot.run('YOUR_BOT_TOKEN')
