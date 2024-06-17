@@ -2,6 +2,7 @@ import asyncio
 import discord
 from discord.ext import commands
 import yt_dlp as youtube_dl
+import os
 
 # Define intents
 intents = discord.Intents.default()
@@ -31,6 +32,7 @@ ytdl_format_options = {
 }
 
 ffmpeg_options = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
 }
 
@@ -61,17 +63,43 @@ class MusicPlayer:
         self.current = None
         self.volume = 0.5
         self.play_next_song = asyncio.Event()
+        self.position = 0
+        self.resuming = False
 
     async def audio_player_task(self, ctx):
         while True:
             self.play_next_song.clear()
             self.current = await self.queue.get()
-            ctx.voice_client.play(self.current, after=lambda e: self.play_next_song.set())
-            await ctx.send(f'Now playing: {self.current.title}')
+            self.position = 0
+            self.resuming = False
+            self.play_song(ctx)
             await self.play_next_song.wait()
+
+    def play_song(self, ctx):
+        if self.resuming:
+            ffmpeg_options['options'] = f'-vn -ss {self.position}'
+        else:
+            ffmpeg_options['options'] = '-vn'
+        ctx.voice_client.play(discord.FFmpegPCMAudio(self.current.url, **ffmpeg_options), after=self.toggle_next)
+        bot.loop.create_task(ctx.send(f'Now playing: {self.current.title}'))
+
+    def toggle_next(self, error):
+        if error:
+            print(f'Player error: {error}')
+        self.play_next_song.set()
 
     def add_to_queue(self, player):
         self.queue.put_nowait(player)
+
+    def pause_song(self, ctx):
+        if ctx.voice_client.is_playing():
+            self.position = ctx.voice_client.source.position
+            ctx.voice_client.pause()
+
+    def resume_song(self, ctx):
+        if ctx.voice_client.is_paused():
+            self.resuming = True
+            self.play_song(ctx)
 
 music_player = MusicPlayer()
 
@@ -132,18 +160,12 @@ async def stop(ctx):
 @bot.command()
 async def pause(ctx):
     """Pauses the current song"""
-    if ctx.voice_client:
-        ctx.voice_client.pause()
-    else:
-        await ctx.send("I am not in a voice channel.")
+    music_player.pause_song(ctx)
 
 @bot.command()
 async def resume(ctx):
     """Resumes the current song"""
-    if ctx.voice_client:
-        ctx.voice_client.resume()
-    else:
-        await ctx.send("I am not in a voice channel.")
+    music_player.resume_song(ctx)
 
 @bot.command()
 async def skip(ctx):
