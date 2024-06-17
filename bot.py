@@ -112,6 +112,7 @@ async def play(ctx, *, url):
         try:
             player = await YTDLSource.from_url(url, loop=bot.loop, stream=True)
             music_player.add_to_queue(player)
+            await ctx.send(f'Added to queue: {player.title}')
             if not ctx.voice_client.is_playing():
                 bot.loop.create_task(music_player.audio_player_task(ctx))
         except youtube_dl.DownloadError as e:
@@ -151,6 +152,16 @@ async def skip(ctx):
         ctx.voice_client.stop()
     else:
         await ctx.send("I am not in a voice channel.")
+
+@bot.command()
+async def queue(ctx):
+    """Displays the current song queue"""
+    if music_player.queue.empty():
+        await ctx.send("The queue is empty.")
+    else:
+        queue_list = list(music_player.queue._queue)
+        queue_str = "\n".join(f"{idx + 1}. {song.title}" for idx, song in enumerate(queue_list))
+        await ctx.send(f"Current queue:\n{queue_str}")
 
 # Run the bot
 bot.run('YOUR_BOT_TOKEN')
